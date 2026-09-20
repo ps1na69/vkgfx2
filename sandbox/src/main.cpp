@@ -1,8 +1,19 @@
-#include <vkgfx2/vkgfx2.h>
+#include "vkgfx2/Application.h"
 
-int main() {
-	Engine test;
-	test.test();
+#include <exception>
 
-	return 0;
+int main()
+{
+    try {
+        Application application;
+
+        if (!application.initialize()) {
+            return 1;
+        }
+
+        return application.run();
+    }
+    catch (const std::exception&) {
+        return 1;
+    }
 }
