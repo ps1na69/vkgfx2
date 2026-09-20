@@ -1,4 +1,5 @@
 #include "vkgfx2/Application.h"
+#include "vkgfx2/Renderer.h"
 #include "vkgfx2/Window.h"
 
 #include <SDL3/SDL.h>
@@ -7,6 +8,7 @@
 
 Application::~Application()
 {
+    renderer_.reset();
     window_.reset();
 
     SDL_Quit();
@@ -23,6 +25,11 @@ bool Application::initialize()
         1280,
         720
     );
+
+    renderer_ = std::make_unique<Renderer>();
+    if (!renderer_->initialize(window_->nativeHandle())) {
+        return false;
+    }
 
     running_ = true;
     return true;
@@ -42,7 +49,9 @@ int Application::run()
             window_->handleEvent(event);
         }
 
-        SDL_Delay(1);
+        if (!renderer_->renderFrame()) {
+            return 1;
+        }
     }
 
     return 0;

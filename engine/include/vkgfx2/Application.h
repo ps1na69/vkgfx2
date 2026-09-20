@@ -1,6 +1,7 @@
 #pragma once
 
 #include <memory>
+#include "Renderer.h"
 #include "Window.h"
 
 class Application {
@@ -16,5 +17,6 @@ public:
 
 private:
     std::unique_ptr<Window> window_;
+    std::unique_ptr<Renderer> renderer_;
     bool running_ = false;
 };
