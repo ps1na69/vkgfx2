@@ -8,9 +8,17 @@ target_link_libraries(Sandbox
 )
 
 if(MSVC)
+    target_compile_options(Sandbox PRIVATE
+        "$<$<CONFIG:Release>:/O2>"
+        "$<$<CONFIG:Release>:/GL>"
+    )
+
     target_link_options(Sandbox PRIVATE
         "$<$<CONFIG:Release>:/SUBSYSTEM:WINDOWS>"
         "$<$<CONFIG:Release>:/ENTRY:mainCRTStartup>"
+        "$<$<CONFIG:Release>:/LTCG>"
+        "$<$<CONFIG:Release>:/OPT:REF>"
+        "$<$<CONFIG:Release>:/OPT:ICF>"
     )
 endif()
 

@@ -4,12 +4,36 @@
 
 #include <filesystem>
 #include <fstream>
+#include <array>
+#include <cstddef>
+#include <cstring>
 #include <vector>
 
 namespace {
 
 constexpr SDL_GPUShaderFormat kSupportedShaderFormats =
     SDL_GPU_SHADERFORMAT_DXIL | SDL_GPU_SHADERFORMAT_SPIRV;
+
+struct Vertex {
+    float position[2];
+    float color[3];
+};
+
+// Three separated golden triangles form a Triforce-like silhouette.
+constexpr std::array<Vertex, 6> kTriangleVertices = {{
+    {{ 0.00f, -0.78f}, {1.00f, 0.80f, 0.16f}}, // Top
+    {{-0.72f,  0.62f}, {0.95f, 0.62f, 0.08f}}, // Bottom-left
+    {{ 0.72f,  0.62f}, {1.00f, 0.88f, 0.28f}}, // Bottom-right
+    {{-0.36f, -0.08f}, {1.00f, 0.92f, 0.38f}}, // Inner-left
+    {{ 0.36f, -0.08f}, {1.00f, 0.92f, 0.38f}}, // Inner-right
+    {{ 0.00f,  0.62f}, {1.00f, 0.74f, 0.12f}}, // Inner-bottom
+}};
+
+constexpr std::array<Uint16, 9> kTriangleIndices = {{
+    0, 3, 4, // Top triangle
+    3, 1, 5, // Bottom-left triangle
+    4, 5, 2, // Bottom-right triangle
+}};
 
 #if defined(NDEBUG)
 constexpr bool kEnableGpuDebugLayer = false;
@@ -48,6 +72,7 @@ SDL_GPUShader* loadShader(
     createInfo.entrypoint = "main";
     createInfo.format = SDL_GPU_SHADERFORMAT_DXIL;
     createInfo.stage = stage;
+    createInfo.num_uniform_buffers = stage == SDL_GPU_SHADERSTAGE_VERTEX ? 1 : 0;
     return SDL_CreateGPUShader(device, &createInfo);
 }
 
@@ -62,6 +87,12 @@ Renderer::~Renderer()
     SDL_WaitForGPUIdle(device_);
     if (pipeline_ != nullptr) {
         SDL_ReleaseGPUGraphicsPipeline(device_, pipeline_);
+    }
+    if (vertexBuffer_ != nullptr) {
+        SDL_ReleaseGPUBuffer(device_, vertexBuffer_);
+    }
+    if (indexBuffer_ != nullptr) {
+        SDL_ReleaseGPUBuffer(device_, indexBuffer_);
     }
     SDL_ReleaseWindowFromGPUDevice(device_, window_);
     SDL_DestroyGPUDevice(device_);
@@ -83,6 +114,76 @@ bool Renderer::initialize(SDL_Window* window)
         device_ = nullptr;
         return false;
     }
+
+    SDL_GPUBufferCreateInfo vertexBufferInfo{};
+    vertexBufferInfo.usage = SDL_GPU_BUFFERUSAGE_VERTEX;
+    vertexBufferInfo.size = sizeof(kTriangleVertices);
+    vertexBuffer_ = SDL_CreateGPUBuffer(device_, &vertexBufferInfo);
+    if (vertexBuffer_ == nullptr) {
+        spdlog::error("Could not create vertex buffer: {}", SDL_GetError());
+        return false;
+    }
+
+    SDL_GPUBufferCreateInfo indexBufferInfo{};
+    indexBufferInfo.usage = SDL_GPU_BUFFERUSAGE_INDEX;
+    indexBufferInfo.size = sizeof(kTriangleIndices);
+    indexBuffer_ = SDL_CreateGPUBuffer(device_, &indexBufferInfo);
+    if (indexBuffer_ == nullptr) {
+        spdlog::error("Could not create index buffer: {}", SDL_GetError());
+        return false;
+    }
+
+    SDL_GPUTransferBufferCreateInfo transferBufferInfo{};
+    transferBufferInfo.usage = SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD;
+    transferBufferInfo.size = sizeof(kTriangleVertices) + sizeof(kTriangleIndices);
+    SDL_GPUTransferBuffer* transferBuffer = SDL_CreateGPUTransferBuffer(
+        device_, &transferBufferInfo);
+    if (transferBuffer == nullptr) {
+        spdlog::error("Could not create vertex transfer buffer: {}", SDL_GetError());
+        return false;
+    }
+
+    void* mappedMemory = SDL_MapGPUTransferBuffer(device_, transferBuffer, false);
+    if (mappedMemory == nullptr) {
+        spdlog::error("Could not map vertex transfer buffer: {}", SDL_GetError());
+        SDL_ReleaseGPUTransferBuffer(device_, transferBuffer);
+        return false;
+    }
+    std::memcpy(mappedMemory, kTriangleVertices.data(), sizeof(kTriangleVertices));
+    std::memcpy(
+        static_cast<std::byte*>(mappedMemory) + sizeof(kTriangleVertices),
+        kTriangleIndices.data(),
+        sizeof(kTriangleIndices));
+    SDL_UnmapGPUTransferBuffer(device_, transferBuffer);
+
+    SDL_GPUCommandBuffer* uploadCommandBuffer = SDL_AcquireGPUCommandBuffer(device_);
+    if (uploadCommandBuffer == nullptr) {
+        spdlog::error("Could not acquire vertex upload command buffer: {}", SDL_GetError());
+        SDL_ReleaseGPUTransferBuffer(device_, transferBuffer);
+        return false;
+    }
+
+    SDL_GPUTransferBufferLocation source{};
+    source.transfer_buffer = transferBuffer;
+    SDL_GPUBufferRegion destination{};
+    destination.buffer = vertexBuffer_;
+    destination.size = sizeof(kTriangleVertices);
+
+    SDL_GPUCopyPass* copyPass = SDL_BeginGPUCopyPass(uploadCommandBuffer);
+    SDL_UploadToGPUBuffer(copyPass, &source, &destination, false);
+
+    source.offset = sizeof(kTriangleVertices);
+    destination.buffer = indexBuffer_;
+    destination.size = sizeof(kTriangleIndices);
+    SDL_UploadToGPUBuffer(copyPass, &source, &destination, false);
+    SDL_EndGPUCopyPass(copyPass);
+
+    if (!SDL_SubmitGPUCommandBuffer(uploadCommandBuffer)) {
+        spdlog::error("Could not submit vertex upload: {}", SDL_GetError());
+        SDL_ReleaseGPUTransferBuffer(device_, transferBuffer);
+        return false;
+    }
+    SDL_ReleaseGPUTransferBuffer(device_, transferBuffer);
 
     const std::filesystem::path shaderDirectory =
         std::filesystem::path(SDL_GetBasePath()) / "shaders";
@@ -116,6 +217,26 @@ bool Renderer::initialize(SDL_Window* window)
     pipelineInfo.rasterizer_state.enable_depth_clip = true;
     pipelineInfo.target_info.num_color_targets = 1;
     pipelineInfo.target_info.color_target_descriptions = &colorTarget;
+
+    SDL_GPUVertexBufferDescription vertexBufferDescription{};
+    vertexBufferDescription.slot = 0;
+    vertexBufferDescription.pitch = sizeof(Vertex);
+    vertexBufferDescription.input_rate = SDL_GPU_VERTEXINPUTRATE_VERTEX;
+
+    std::array<SDL_GPUVertexAttribute, 2> vertexAttributes{};
+    vertexAttributes[0].location = 0;
+    vertexAttributes[0].buffer_slot = 0;
+    vertexAttributes[0].format = SDL_GPU_VERTEXELEMENTFORMAT_FLOAT2;
+    vertexAttributes[0].offset = offsetof(Vertex, position);
+    vertexAttributes[1].location = 1;
+    vertexAttributes[1].buffer_slot = 0;
+    vertexAttributes[1].format = SDL_GPU_VERTEXELEMENTFORMAT_FLOAT3;
+    vertexAttributes[1].offset = offsetof(Vertex, color);
+
+    pipelineInfo.vertex_input_state.num_vertex_buffers = 1;
+    pipelineInfo.vertex_input_state.vertex_buffer_descriptions = &vertexBufferDescription;
+    pipelineInfo.vertex_input_state.num_vertex_attributes = vertexAttributes.size();
+    pipelineInfo.vertex_input_state.vertex_attributes = vertexAttributes.data();
     pipeline_ = SDL_CreateGPUGraphicsPipeline(device_, &pipelineInfo);
 
     SDL_ReleaseGPUShader(device_, vertexShader);
@@ -130,7 +251,7 @@ bool Renderer::initialize(SDL_Window* window)
     return true;
 }
 
-bool Renderer::renderFrame()
+bool Renderer::renderFrame(const std::array<float, 16>& transformMatrix)
 {
     SDL_GPUCommandBuffer* commandBuffer = SDL_AcquireGPUCommandBuffer(device_);
     if (commandBuffer == nullptr) {
@@ -158,10 +279,19 @@ bool Renderer::renderFrame()
     colorTarget.load_op = SDL_GPU_LOADOP_CLEAR;
     colorTarget.store_op = SDL_GPU_STOREOP_STORE;
 
+    SDL_PushGPUVertexUniformData(
+        commandBuffer, 0, transformMatrix.data(), sizeof(transformMatrix));
+
     SDL_GPURenderPass* renderPass = SDL_BeginGPURenderPass(
         commandBuffer, &colorTarget, 1, nullptr);
     SDL_BindGPUGraphicsPipeline(renderPass, pipeline_);
-    SDL_DrawGPUPrimitives(renderPass, 3, 1, 0, 0);
+    SDL_GPUBufferBinding vertexBufferBinding{};
+    vertexBufferBinding.buffer = vertexBuffer_;
+    SDL_BindGPUVertexBuffers(renderPass, 0, &vertexBufferBinding, 1);
+    SDL_GPUBufferBinding indexBufferBinding{};
+    indexBufferBinding.buffer = indexBuffer_;
+    SDL_BindGPUIndexBuffer(renderPass, &indexBufferBinding, SDL_GPU_INDEXELEMENTSIZE_16BIT);
+    SDL_DrawGPUIndexedPrimitives(renderPass, kTriangleIndices.size(), 1, 0, 0, 0);
     SDL_EndGPURenderPass(renderPass);
 
     if (!SDL_SubmitGPUCommandBuffer(commandBuffer)) {

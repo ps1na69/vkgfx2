@@ -53,3 +53,10 @@ target_link_libraries(Engine
         SDL3::SDL3
         spdlog::spdlog
 )
+
+if(MSVC)
+    target_compile_options(Engine PRIVATE
+        "$<$<CONFIG:Release>:/O2>"
+        "$<$<CONFIG:Release>:/GL>"
+    )
+endif()

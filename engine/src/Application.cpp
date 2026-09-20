@@ -31,6 +31,7 @@ bool Application::initialize()
         return false;
     }
 
+    previousFrameTime_ = SDL_GetTicksNS();
     running_ = true;
     return true;
 }
@@ -49,7 +50,14 @@ int Application::run()
             window_->handleEvent(event);
         }
 
-        if (!renderer_->renderFrame()) {
+        const Uint64 currentFrameTime = SDL_GetTicksNS();
+        const float deltaSeconds = static_cast<float>(
+            currentFrameTime - previousFrameTime_) / 1'000'000'000.0f;
+        previousFrameTime_ = currentFrameTime;
+
+        transform_.rotate(deltaSeconds * 0.8f);
+
+        if (!renderer_->renderFrame(transform_.matrix())) {
             return 1;
         }
     }
