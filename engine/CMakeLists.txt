@@ -19,4 +19,5 @@ target_include_directories(Engine
 target_link_libraries(Engine
     PUBLIC
         SDL3::SDL3
+        spdlog::spdlog
 )

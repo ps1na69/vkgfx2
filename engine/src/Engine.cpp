@@ -1,6 +1,6 @@
 #include "vkgfx2/vkgfx2.h"
-#include <print>
+#include <spdlog/spdlog.h>
 
 void Engine::test() {
-	std::printf("Hey, its working");
+	spdlog::info("Hey, its working!");
 }
