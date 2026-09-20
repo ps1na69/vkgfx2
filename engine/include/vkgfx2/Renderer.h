@@ -16,4 +16,5 @@ public:
 private:
     SDL_Window* window_ = nullptr;
     SDL_GPUDevice* device_ = nullptr;
+    SDL_GPUGraphicsPipeline* pipeline_ = nullptr;
 };

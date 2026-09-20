@@ -24,3 +24,11 @@ if(TARGET SDL3-shared)
         COMMENT "Copying SDL3 runtime next to Sandbox"
     )
 endif()
+
+add_custom_command(TARGET Sandbox POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:Sandbox>/shaders"
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        "${VKGFX2_SHADER_OUTPUT_DIRECTORY}"
+        "$<TARGET_FILE_DIR:Sandbox>/shaders"
+    COMMENT "Copying compiled shaders next to Sandbox"
+)
